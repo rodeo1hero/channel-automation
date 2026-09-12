@@ -1,0 +1,8 @@
+# Upcoming topics, in order. The pipeline pops the first entry each run.
+# When this list is empty, ideas.py asks Claude to propose new ones based on
+# channel_config.yaml + state/history.json (so it won't repeat a past topic).
+
+- title: "What it actually meant to be a knight"
+  angle: >
+    Knighthood as a feudal debt system — the real cost of the armor, horse, and
+    training, and what a knight owed in return for his land.

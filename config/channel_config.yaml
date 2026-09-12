@@ -1,0 +1,29 @@
+# Everything that defines the channel's voice/format lives here so the pipeline
+# stays generic Python code and all the "creative direction" is editable without touching it.
+
+channel_name: "Rodion's video essays"   # TODO: replace with actual channel name
+niche: >
+  Short pop-science / psychological video essays. Format: take an everyday thing
+  or assumption and reveal the hidden mechanism, history, or system behind it.
+tone: "Curious, clear, a little irreverent. Explain like a smart friend, not a textbook."
+target_length_minutes: 8
+language: "en"
+
+# TTS voice (Google Cloud TTS voice name — change to taste, list via
+# `gcloud texttospeech voices list` or the Cloud console)
+tts:
+  provider: "google"
+  voice_name: "en-US-Chirp3-HD-Charon"
+  speaking_rate: 1.0
+
+# Visual style prompt appended to every generated image so the whole video looks consistent
+visual_style_suffix: >
+  cinematic muted color palette, painterly historical illustration style,
+  dramatic lighting, no text or watermarks, 16:9
+
+images_per_minute: 2   # roughly how many scene images to generate per minute of video
+
+youtube:
+  category_id: "27"     # Education
+  privacy_status: "private"   # "private" (review before publishing) | "public" | "unlisted"
+  default_tags: ["video essay", "history", "psychology", "explained"]
