@@ -6,6 +6,9 @@ on:
     - cron: "0 15 * * 1,4"
   workflow_dispatch: {}   # lets you trigger a run manually from the Actions tab
 
+permissions:
+  contents: write   # needed so the last step can commit the updated queue/history back
+
 jobs:
   publish:
     runs-on: ubuntu-latest
