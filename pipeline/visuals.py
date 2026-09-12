@@ -48,8 +48,29 @@ def _generate_replicate(prompt: str, out_path: Path) -> None:
 
     resp.raise_for_status()
     data = resp.json()
+
+    # "Prefer: wait" only blocks for up to ~60s; a slow generation can come back
+    # here still "starting"/"processing" with no output yet. Poll the prediction
+    # until it reaches a terminal state instead of assuming it's done.
+    get_url = data["urls"]["get"]
+    for _ in range(60):  # up to ~5 minutes total
+        status = data.get("status")
+        if status == "succeeded":
+            break
+        if status in ("failed", "canceled"):
+            raise RuntimeError(f"Replicate prediction {status}: {data.get('error')}")
+        time.sleep(5)
+        poll_resp = requests.get(get_url, headers={"Authorization": f"Bearer {token}"}, timeout=30)
+        poll_resp.raise_for_status()
+        data = poll_resp.json()
+    else:
+        raise RuntimeError(f"Replicate prediction did not finish in time: {data.get('status')}")
+
     output = data.get("output")
     image_url = output[0] if isinstance(output, list) else output
+    if not image_url:
+        raise RuntimeError(f"Replicate prediction succeeded but returned no output: {data}")
+
     img_resp = requests.get(image_url, timeout=60)
     img_resp.raise_for_status()
     with open(out_path, "wb") as f:
