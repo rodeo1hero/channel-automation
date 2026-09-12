@@ -77,6 +77,29 @@ def _generate_replicate(prompt: str, out_path: Path) -> None:
         f.write(img_resp.content)
 
 
+NSFW_RETRIES = 3
+
+
+def _generate_image_safely(prompt: str, out_path: Path, fallback_label: str) -> None:
+    """Wraps _generate_replicate with retries for FLUX's safety-filter false
+    positives (it flags plenty of entirely tame content, e.g. historical armor
+    or weapons, as NSFW). Retrying often succeeds since the check is somewhat
+    stochastic. If it still fails after a few tries, fall back to a placeholder
+    image instead of crashing the whole run over one scene."""
+    last_error = None
+    for attempt in range(NSFW_RETRIES):
+        try:
+            _generate_replicate(prompt, out_path)
+            return
+        except RuntimeError as e:
+            if "NSFW" not in str(e):
+                raise
+            last_error = e
+            log(f"NSFW false-positive on attempt {attempt + 1}/{NSFW_RETRIES}, retrying")
+    log(f"Giving up after {NSFW_RETRIES} NSFW-flagged attempts, using placeholder image instead: {last_error}")
+    _placeholder_image(out_path, fallback_label)
+
+
 def generate_scene_images(scenes: list, run_dir: Path) -> list:
     """Mutates scenes in place, adding 'image_path' to each."""
     config = load_channel_config()
@@ -93,7 +116,7 @@ def generate_scene_images(scenes: list, run_dir: Path) -> list:
             _placeholder_image(out_path, scene["visual_prompt"])
         else:
             log(f"Generating image for scene {i}")
-            _generate_replicate(full_prompt, out_path)
+            _generate_image_safely(full_prompt, out_path, scene["visual_prompt"])
             time.sleep(1.1)  # stay under Replicate's 1 req/sec cap for accounts without billing set up
 
         scene["image_path"] = str(out_path)
@@ -108,5 +131,5 @@ def generate_thumbnail(title: str, hero_prompt: str, run_dir: Path) -> Path:
         _placeholder_image(out_path, title, size=(1280, 720))
     else:
         log("Generating thumbnail")
-        _generate_replicate(hero_prompt, out_path)
+        _generate_image_safely(hero_prompt, out_path, title)
     return out_path
