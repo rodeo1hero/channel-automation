@@ -18,18 +18,34 @@ def _placeholder_image(path: Path, text: str, size=(1792, 1008)) -> None:
     img.save(path)
 
 
+MAX_RETRIES = 6
+
+
 def _generate_replicate(prompt: str, out_path: Path) -> None:
     token = require_env("REPLICATE_API_TOKEN")
-    resp = requests.post(
-        f"https://api.replicate.com/v1/models/{REPLICATE_MODEL}/predictions",
-        headers={
-            "Authorization": f"Bearer {token}",
-            "Content-Type": "application/json",
-            "Prefer": "wait",
-        },
-        json={"input": {"prompt": prompt, "aspect_ratio": "16:9"}},
-        timeout=120,
-    )
+
+    resp = None
+    for attempt in range(MAX_RETRIES):
+        resp = requests.post(
+            f"https://api.replicate.com/v1/models/{REPLICATE_MODEL}/predictions",
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Content-Type": "application/json",
+                "Prefer": "wait",
+            },
+            json={"input": {"prompt": prompt, "aspect_ratio": "16:9"}},
+            timeout=120,
+        )
+        if resp.status_code != 429:
+            break
+        # Rate-limited: back off and retry rather than crashing the whole run.
+        # Respect the server's Retry-After header when it sends one, otherwise
+        # use exponential backoff (this matters most for accounts without a
+        # payment method on file, which Replicate caps at ~1 request/second).
+        wait_s = float(resp.headers.get("Retry-After", 2 ** attempt))
+        log(f"Replicate rate-limited (attempt {attempt + 1}/{MAX_RETRIES}), waiting {wait_s:.0f}s")
+        time.sleep(wait_s)
+
     resp.raise_for_status()
     data = resp.json()
     output = data.get("output")
@@ -57,7 +73,7 @@ def generate_scene_images(scenes: list, run_dir: Path) -> list:
         else:
             log(f"Generating image for scene {i}")
             _generate_replicate(full_prompt, out_path)
-            time.sleep(0.5)  # be polite to the API
+            time.sleep(1.1)  # stay under Replicate's 1 req/sec cap for accounts without billing set up
 
         scene["image_path"] = str(out_path)
 
