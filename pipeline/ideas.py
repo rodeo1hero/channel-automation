@@ -34,7 +34,9 @@ def get_next_topic(client=None) -> dict:
     log("Topic queue empty — asking Claude to propose a new topic")
     config = load_channel_config()
     history = load_history()
-    past_titles = "\n".join(f"- {h['title']}" for h in history) or "(none yet)"
+    past_titles = "\n".join(
+        f"- {h.get('published_title', h.get('topic_title', '(untitled)'))}" for h in history
+    ) or "(none yet)"
 
     if DRY_RUN or client is None:
         return {

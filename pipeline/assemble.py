@@ -10,21 +10,40 @@ WIDTH, HEIGHT = 1920, 1080
 
 
 def _ken_burns_clip(image_path: Path, duration: float, out_path: Path, zoom_in: bool) -> None:
-    """Renders one scene image into a short video clip with a slow pan/zoom."""
+    """Renders one scene image into a short video clip with a slow pan/zoom
+    (Ken Burns effect), zooming into the center of the frame."""
     n_frames = max(1, int(duration * FPS))
+    # -t must match n_frames/FPS exactly. If it's even slightly longer, ffmpeg's
+    # "-loop 1" feeds the image as a second input frame partway through, which
+    # resets zoompan's internal zoom accumulator back to 1 -- the "zooms, snaps
+    # back to full image, zooms again" glitch.
+    clip_duration = n_frames / FPS
+
+    max_zoom = 1.15
+    zoom_rate = (max_zoom - 1.0) / n_frames
     if zoom_in:
-        zoom_expr = f"zoom+0.0007"
+        zoom_expr = f"min(zoom+{zoom_rate:.6f},{max_zoom})"
     else:
-        zoom_expr = f"if(lte(zoom,1.0),1.15,zoom-0.0007)"
+        # Start at max_zoom on the very first output frame ("on" is zoompan's
+        # output-frame-number variable), then count down each frame after.
+        # (Deliberately not using the `reverse` filter for this -- it has to
+        # buffer every decoded frame in memory first, which is heavy enough to
+        # get OOM-killed on a modest runner for even a few seconds of 1080p.)
+        zoom_expr = f"if(eq(on,1),{max_zoom},max(zoom-{zoom_rate:.6f},1.0))"
+    # Keep the crop centered on the image -- without explicit x/y expressions,
+    # zoompan defaults to cropping from the top-left corner as it zooms in.
+    x_expr = "iw/2-(iw/zoom/2)"
+    y_expr = "ih/2-(ih/zoom/2)"
 
     vf = (
-        f"scale=8000:-1,"
-        f"zoompan=z='{zoom_expr}':d={n_frames}:s={WIDTH}x{HEIGHT}:fps={FPS}"
+        f"scale=8000:-2,"
+        f"zoompan=z='{zoom_expr}':x='{x_expr}':y='{y_expr}':d={n_frames}:s={WIDTH}x{HEIGHT}:fps={FPS}"
     )
+
     subprocess.run(
         [
             "ffmpeg", "-y", "-loop", "1", "-i", str(image_path),
-            "-vf", vf, "-t", str(duration),
+            "-vf", vf, "-t", str(clip_duration),
             "-c:v", "libx264", "-pix_fmt", "yuv420p", str(out_path),
         ],
         check=True, capture_output=True,
