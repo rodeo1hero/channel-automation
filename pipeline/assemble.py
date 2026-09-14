@@ -9,6 +9,25 @@ FPS = 30
 WIDTH, HEIGHT = 1920, 1080
 
 
+def _run_ffmpeg(args: list) -> None:
+    """subprocess.run wrapper that prints ffmpeg's actual stderr on failure
+    instead of just an opaque exit code -- ffmpeg's error output is the whole
+    point of capturing it."""
+    result = subprocess.run(args, capture_output=True, text=True)
+    if result.returncode != 0:
+        log("ffmpeg failed:")
+        log(result.stderr[-4000:])  # tail -- full output can be huge
+        raise RuntimeError(f"ffmpeg exited with code {result.returncode}")
+
+
+def _filtergraph_path(path: Path) -> str:
+    """Escape a filesystem path for use as a value inside an ffmpeg filtergraph
+    argument (e.g. subtitles=...:option). On Windows, a raw 'C:\\...' path
+    breaks the filtergraph parser: backslashes are its own escape character,
+    and the drive-letter colon gets misread as a filter-option separator."""
+    return str(path).replace("\\", "/").replace(":", "\\:")
+
+
 def _ken_burns_clip(image_path: Path, duration: float, out_path: Path, zoom_in: bool) -> None:
     """Renders one scene image into a short video clip with a slow pan/zoom
     (Ken Burns effect), zooming into the center of the frame."""
@@ -40,14 +59,11 @@ def _ken_burns_clip(image_path: Path, duration: float, out_path: Path, zoom_in: 
         f"zoompan=z='{zoom_expr}':x='{x_expr}':y='{y_expr}':d={n_frames}:s={WIDTH}x{HEIGHT}:fps={FPS}"
     )
 
-    subprocess.run(
-        [
-            "ffmpeg", "-y", "-loop", "1", "-i", str(image_path),
-            "-vf", vf, "-t", str(clip_duration),
-            "-c:v", "libx264", "-pix_fmt", "yuv420p", str(out_path),
-        ],
-        check=True, capture_output=True,
-    )
+    _run_ffmpeg([
+        "ffmpeg", "-y", "-loop", "1", "-i", str(image_path),
+        "-vf", vf, "-t", str(clip_duration),
+        "-c:v", "libx264", "-pix_fmt", "yuv420p", str(out_path),
+    ])
 
 
 def assemble_video(scenes: list, narration_path: Path, captions_path: Path, run_dir: Path) -> Path:
@@ -69,23 +85,18 @@ def assemble_video(scenes: list, narration_path: Path, captions_path: Path, run_
         for p in clip_paths:
             f.write(f"file '{p.resolve()}'\n")
     silent_video = run_dir / "silent_video.mp4"
-    subprocess.run(
-        [
-            "ffmpeg", "-y", "-f", "concat", "-safe", "0",
-            "-i", str(concat_list), "-c", "copy", str(silent_video),
-        ],
-        check=True, capture_output=True,
-    )
+    _run_ffmpeg([
+        "ffmpeg", "-y", "-f", "concat", "-safe", "0",
+        "-i", str(concat_list), "-c", "copy", str(silent_video),
+    ])
 
     # Mux narration audio + burn in captions
     final_path = run_dir / "final_video.mp4"
     log("Muxing audio and burning in captions")
-    subprocess.run(
-        [
-            "ffmpeg", "-y", "-i", str(silent_video), "-i", str(narration_path),
-            "-vf", f"subtitles={captions_path}:force_style='Fontsize=22,PrimaryColour=&HFFFFFF&'",
-            "-c:v", "libx264", "-c:a", "aac", "-shortest", str(final_path),
-        ],
-        check=True, capture_output=True,
-    )
+    subtitles_arg = f"subtitles={_filtergraph_path(captions_path)}:force_style='Fontsize=22,PrimaryColour=&HFFFFFF&'"
+    _run_ffmpeg([
+        "ffmpeg", "-y", "-i", str(silent_video), "-i", str(narration_path),
+        "-vf", subtitles_arg,
+        "-c:v", "libx264", "-c:a", "aac", "-shortest", str(final_path),
+    ])
     return final_path
