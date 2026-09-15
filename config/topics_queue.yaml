@@ -1,4 +1,64 @@
 # Upcoming topics, in order. The pipeline pops the first entry each run.
 # When this list is empty, ideas.py asks Claude to propose new ones based on
 # channel_config.yaml + state/history.json (so it won't repeat a past topic).
-[]
+- title: "How Rome Became the Most Powerful Empire in the World"
+  angle: >-
+    Trace Rome's rise from a small city-state to controlling a huge share of
+    the known world -- the engine was military expansion feeding economic
+    growth feeding more military expansion. Good scenes for cast interactions
+    (archetype in parentheses): a general pushing for the next campaign
+    (authority), a soldier explaining why Rome needs another war (guard), and
+    a conquered king negotiating terms of surrender (authority or official).
+    Themes: power, military conquest, expansion, and the economics that made
+    continuous war profitable for Rome.
+
+- title: "How Ancient Rome Actually Made Its Money"
+  angle: >-
+    Follow a single coin through the Roman economy step by step: mined, paid
+    to the Roman government, paid out to a soldier, spent with a merchant,
+    collected as tax, and ending up with a wealthy Roman. Structure the
+    scenes literally as the coin's journey, one stop per scene. Cast
+    interactions (archetype in parentheses): a miner (poor), a soldier being
+    paid (guard), a merchant selling goods (merchant), a tax collector
+    (official), a wealthy Roman receiving/spending it (wealthy). Themes:
+    money, taxation, trade, and how conquest fed the whole economic machine.
+
+- title: "Why Being a Roman Soldier Was Basically a Business"
+  angle: >-
+    Explain why the Roman army was so effective by treating it as a
+    career/business proposition for the soldiers in it -- pay, rewards,
+    loot, and supply lines, not just discipline. Cast interactions
+    (archetype in parentheses): the narrator effectively "interviewing" a
+    soldier about his pay and conditions (guard), a general demanding more
+    troops (authority), an emperor reviewing the military budget
+    (authority), a soldier returning from a campaign with loot to sell off
+    (guard, then merchant for the selling beat). Keep the tone a bit
+    wry/funny -- military service as a job with a pay structure and perks,
+    not just heroics. Themes: military, money, careers, empire-building.
+
+- title: "How Caesar Became So Powerful"
+  angle: >-
+    Follow Julius Caesar's rise from politician to dictator, framed almost
+    like a modern political/business analyst breaking down a power play:
+    "Caesar had a problem. He needed money, popularity, and an army.
+    Ideally, all three." Then show how he built each one in turn. Caesar
+    himself can recur as the authority archetype across multiple scenes
+    (the same crown/cloak design gets reused consistently within one video,
+    so it reads as one consistent character). Other cast interactions
+    (archetype in parentheses): a rival politician (official), a soldier
+    under his command (guard), a wealthy backer (wealthy), an ordinary
+    citizen swayed by his popularity (poor). Themes: politics, wealth,
+    influence, ambition, power.
+
+- title: "Why Rome Was Rich but Ordinary Romans Were Poor"
+  angle: >-
+    Explain the gap between the Roman elite and ordinary people through a
+    handful of quick vignettes rather than one long explanation. Cast
+    interactions (archetype in parentheses): a wealthy Roman showing off
+    his villa/wealth (wealthy), a poor Roman struggling to afford basics
+    (poor), a merchant raising prices (merchant), a tax collector demanding
+    payment (official). Feel free to make this genuinely funny -- for
+    example a short haggling exchange like: Poor Roman: "How much is
+    bread?" Merchant: "One coin." Poor Roman: "I only have half a coin."
+    Merchant: "Then I have half a bread." Narrator: "Capitalism had entered
+    the chat." Themes: inequality, wealth, taxation, inflation, and class.
