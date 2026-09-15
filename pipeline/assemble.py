@@ -1,12 +1,22 @@
-"""Stage 6: assemble scene images (with pan/zoom) + full narration audio +
-burned-in captions into the final .mp4, using ffmpeg."""
+"""Stage 6: concatenate the per-scene stick-figure clips (already rendered
+by visuals.generate_scene_clips, each at its scene's exact spoken duration)
+into one silent video, then mux in the full narration + burned-in captions."""
 import subprocess
 from pathlib import Path
 
 from .utils import log
 
-FPS = 30
-WIDTH, HEIGHT = 1920, 1080
+# Final video is sped up uniformly (video + audio + already-burned-in captions all
+# together, in the same ffmpeg pass that muxes/burns them) by this factor, per the
+# user's request for a punchier pace -- 1.2x is the same "slightly faster" feel as
+# watching at 1.2x playback speed on YouTube, applied once at render time instead of
+# left to the viewer. ffmpeg's `atempo` audio filter accepts 0.5-2.0 directly, so a
+# single atempo=SPEED_FACTOR needs no chaining. Captions are burned in via the
+# `subtitles` filter earlier in the SAME -vf chain (at the original, un-sped narration
+# timing from Whisper), then `setpts` remaps every frame's timestamp by this factor --
+# since it runs after the subtitles filter, the burned-in caption timing is carried
+# along with the speedup rather than needing separate rescaling.
+SPEED_FACTOR = 1.2
 
 
 def _run_ffmpeg(args: list) -> None:
@@ -28,75 +38,42 @@ def _filtergraph_path(path: Path) -> str:
     return str(path).replace("\\", "/").replace(":", "\\:")
 
 
-def _ken_burns_clip(image_path: Path, duration: float, out_path: Path, zoom_in: bool) -> None:
-    """Renders one scene image into a short video clip with a slow pan/zoom
-    (Ken Burns effect), zooming into the center of the frame."""
-    n_frames = max(1, int(duration * FPS))
-    # -t must match n_frames/FPS exactly. If it's even slightly longer, ffmpeg's
-    # "-loop 1" feeds the image as a second input frame partway through, which
-    # resets zoompan's internal zoom accumulator back to 1 -- the "zooms, snaps
-    # back to full image, zooms again" glitch.
-    clip_duration = n_frames / FPS
+def assemble_video(scenes: list, narration_path: Path, captions_path, run_dir: Path) -> Path:
+    """captions_path may be None to skip caption burn-in entirely (used for Shorts --
+    see shorts.py: the narrow 1080px-wide vertical frame made the fixed-size burned-in
+    captions wrap to 4-5 lines and overlap the character, and the user asked for no
+    subtitles on the Shorts at all, so shorts.py now skips generating them and passes
+    None here rather than trying to shrink/reflow them to fit)."""
+    clip_paths = [Path(scene["clip_path"]) for scene in scenes]
+    if not clip_paths:
+        raise RuntimeError("assemble_video: no scene clips to concatenate")
 
-    max_zoom = 1.15
-    zoom_rate = (max_zoom - 1.0) / n_frames
-    if zoom_in:
-        zoom_expr = f"min(zoom+{zoom_rate:.6f},{max_zoom})"
-    else:
-        # Start at max_zoom on the very first output frame ("on" is zoompan's
-        # output-frame-number variable), then count down each frame after.
-        # (Deliberately not using the `reverse` filter for this -- it has to
-        # buffer every decoded frame in memory first, which is heavy enough to
-        # get OOM-killed on a modest runner for even a few seconds of 1080p.)
-        zoom_expr = f"if(eq(on,1),{max_zoom},max(zoom-{zoom_rate:.6f},1.0))"
-    # Keep the crop centered on the image -- without explicit x/y expressions,
-    # zoompan defaults to cropping from the top-left corner as it zooms in.
-    x_expr = "iw/2-(iw/zoom/2)"
-    y_expr = "ih/2-(ih/zoom/2)"
-
-    vf = (
-        f"scale=8000:-2,"
-        f"zoompan=z='{zoom_expr}':x='{x_expr}':y='{y_expr}':d={n_frames}:s={WIDTH}x{HEIGHT}:fps={FPS}"
-    )
-
-    _run_ffmpeg([
-        "ffmpeg", "-y", "-loop", "1", "-i", str(image_path),
-        "-vf", vf, "-t", str(clip_duration),
-        "-c:v", "libx264", "-pix_fmt", "yuv420p", str(out_path),
-    ])
-
-
-def assemble_video(scenes: list, narration_path: Path, captions_path: Path, run_dir: Path) -> Path:
-    clips_dir = run_dir / "clips"
-    clips_dir.mkdir(parents=True, exist_ok=True)
-
-    clip_paths = []
-    for i, scene in enumerate(scenes):
-        clip_path = clips_dir / f"clip_{i:03d}.mp4"
-        log(f"Rendering pan/zoom clip for scene {i}")
-        _ken_burns_clip(
-            Path(scene["image_path"]), scene["duration"], clip_path, zoom_in=(i % 2 == 0)
-        )
-        clip_paths.append(clip_path)
-
-    # Concatenate silent video clips
-    concat_list = clips_dir / "concat_list.txt"
+    # Concatenate silent scene clips (each already rendered at its scene's
+    # exact spoken duration, so no re-timing is needed here).
+    concat_list = run_dir / "concat_list.txt"
     with open(concat_list, "w") as f:
         for p in clip_paths:
             f.write(f"file '{p.resolve()}'\n")
     silent_video = run_dir / "silent_video.mp4"
+    log(f"Concatenating {len(clip_paths)} scene clips")
     _run_ffmpeg([
         "ffmpeg", "-y", "-f", "concat", "-safe", "0",
         "-i", str(concat_list), "-c", "copy", str(silent_video),
     ])
 
-    # Mux narration audio + burn in captions
+    # Mux narration audio + (optionally) burn in captions + speed the whole thing up
     final_path = run_dir / "final_video.mp4"
-    log("Muxing audio and burning in captions")
-    subtitles_arg = f"subtitles={_filtergraph_path(captions_path)}:force_style='Fontsize=22,PrimaryColour=&HFFFFFF&'"
+    if captions_path:
+        log(f"Muxing audio, burning in captions, and speeding up {SPEED_FACTOR}x")
+        subtitles_arg = f"subtitles={_filtergraph_path(captions_path)}:force_style='Fontsize=22,PrimaryColour=&HFFFFFF&'"
+        video_filter = f"{subtitles_arg},setpts=PTS/{SPEED_FACTOR}"
+    else:
+        log(f"Muxing audio (no captions) and speeding up {SPEED_FACTOR}x")
+        video_filter = f"setpts=PTS/{SPEED_FACTOR}"
+    audio_filter = f"atempo={SPEED_FACTOR}"
     _run_ffmpeg([
         "ffmpeg", "-y", "-i", str(silent_video), "-i", str(narration_path),
-        "-vf", subtitles_arg,
+        "-vf", video_filter, "-af", audio_filter,
         "-c:v", "libx264", "-c:a", "aac", "-shortest", str(final_path),
     ])
     return final_path

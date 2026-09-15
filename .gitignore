@@ -1,5 +1,8 @@
 .env
 client_secret.json
+gcp-service-account.json
 assets/runs/
 __pycache__/
 *.pyc
+Claude outputs/
+_incoming_update.zip
