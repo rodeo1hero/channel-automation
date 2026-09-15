@@ -6,7 +6,11 @@ niche: >
   Short pop-science / psychological video essays. Format: take an everyday thing
   or assumption and reveal the hidden mechanism, history, or system behind it.
 tone: "Curious, clear, a little irreverent. Explain like a smart friend, not a textbook."
-target_length_minutes: 8
+# Spoken-narration length BEFORE the 1.2x final speed-up in pipeline/assemble.py
+# (SPEED_FACTOR) -- the actual published video runs shorter than this by that
+# factor (e.g. 12 here -> ~10 min final video). Set this to your target final
+# length x 1.2, not the final length itself.
+target_length_minutes: 12
 language: "en"
 
 # TTS voice (Google Cloud TTS voice name — change to taste, list via
@@ -16,12 +20,15 @@ tts:
   voice_name: "en-US-Chirp3-HD-Charon"
   speaking_rate: 1.0
 
-# Visual style prompt appended to every generated image so the whole video looks consistent
-visual_style_suffix: >
-  cinematic muted color palette, painterly historical illustration style,
-  dramatic lighting, no text or watermarks, 16:9
-
-images_per_minute: 2   # roughly how many scene images to generate per minute of video
+# Visuals: a recurring stick-figure character -- same face and build every
+# time, wearing one of a handful of outfits (see pipeline/character_gen.py's
+# OUTFITS) -- is composited over an AI-generated background per scene
+# (pipeline/scene_backgrounds.py, Replicate/FLUX). Claude picks the outfit
+# and each scene's actions/background description when writing the script
+# (see pipeline/script_writer.py); there's nothing to configure here. Pose
+# sprites are generated on demand and cached per (outfit, pose) combination
+# under assets/character/<outfit>/, so cost only recurs for genuinely new
+# combinations, not every video.
 
 youtube:
   category_id: "27"     # Education
