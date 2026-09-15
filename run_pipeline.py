@@ -19,7 +19,7 @@ if args.dry_run:
     os.environ["PIPELINE_DRY_RUN"] = "1"
 
 from pipeline.utils import ROOT, DRY_RUN, append_history, load_channel_config, log, require_env
-from pipeline import ideas, script_writer, voiceover, visuals, captions, assemble, upload
+from pipeline import cost_tracker, ideas, script_writer, shorts, voiceover, visuals, captions, assemble, upload
 
 
 def main():
@@ -38,14 +38,15 @@ def main():
 
     script = script_writer.write_script(topic, anthropic_client)
     scenes = script["scenes"]
-    log(f"Script has {len(scenes)} scenes")
+    outfit = script.get("outfit", "standard")
+    log(f"Script has {len(scenes)} scenes, outfit={outfit}")
 
-    voiceover.synthesize_scenes(scenes, run_dir)
+    voiceover.synthesize_scenes(scenes, run_dir, run_id=run_id)
     narration_path = voiceover.concat_audio(scenes, run_dir)
 
-    visuals.generate_scene_images(scenes, run_dir)
-    thumb_prompt = scenes[0]["visual_prompt"] if scenes else script["title"]
-    thumbnail_path = visuals.generate_thumbnail(script["title"], thumb_prompt, run_dir)
+    visuals.generate_scene_clips(scenes, run_dir, outfit=outfit, run_id=run_id)
+    hero_scene = scenes[0] if scenes else {}
+    thumbnail_path = visuals.generate_thumbnail(script["title"], hero_scene, run_dir, outfit=outfit)
 
     captions_path = captions.generate_captions(narration_path, scenes, run_dir)
 
@@ -58,15 +59,31 @@ def main():
         final_video, thumbnail_path, script["title"], script["description"], tags
     )
 
+    # Companion Short: runs AFTER the main video is uploaded, since its description
+    # links to the main video's now-known URL (https://youtu.be/<video_id>) -- the
+    # whole point of a companion Short is to hook viewers into the video it promotes.
+    # A failure here should never take down an otherwise-successful main-video
+    # publish, so it's caught and logged rather than left to crash the run.
+    short_video_id = None
+    try:
+        short_result = shorts.produce_short(script, outfit, video_id, run_dir, run_id=run_id,
+                                             client=anthropic_client)
+        short_video_id = short_result["video_id"]
+    except Exception as e:
+        log(f"Warning: companion Short failed, main video was still published fine: {e}")
+
     append_history({
         "run_id": run_id,
         "topic_title": topic["title"],
         "published_title": script["title"],
         "video_id": video_id,
+        "short_video_id": short_video_id,
         "timestamp": dt.datetime.now(dt.timezone.utc).isoformat(),
     })
 
-    log(f"=== Done. video_id={video_id} ===")
+    log(f"=== Done. video_id={video_id} short_video_id={short_video_id} ===")
+    if not DRY_RUN:
+        cost_tracker.print_run_summary(run_id)
 
 
 if __name__ == "__main__":

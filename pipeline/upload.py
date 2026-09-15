@@ -26,11 +26,15 @@ def upload_video(
     description: str,
     tags: list,
 ) -> str:
+    """thumbnail_path may be None -- a YouTube Short (see pipeline/shorts.py) skips a
+    custom thumbnail entirely, since the Shorts feed doesn't display one (only the
+    long-form video grid/watch page does)."""
     config = load_channel_config()
     yt_cfg = config["youtube"]
 
     if DRY_RUN:
-        log(f"Would upload '{title}' ({video_path.name}) with thumbnail {thumbnail_path.name}")
+        thumb_label = thumbnail_path.name if thumbnail_path else "(none)"
+        log(f"Would upload '{title}' ({video_path.name}) with thumbnail {thumb_label}")
         log(f"privacy_status={yt_cfg['privacy_status']} tags={tags}")
         return "DRY-RUN-VIDEO-ID"
 
@@ -54,9 +58,10 @@ def upload_video(
     video_id = response["id"]
     log(f"Uploaded: https://youtu.be/{video_id}")
 
-    log("Setting thumbnail")
-    youtube.thumbnails().set(
-        videoId=video_id, media_body=MediaFileUpload(str(thumbnail_path))
-    ).execute()
+    if thumbnail_path:
+        log("Setting thumbnail")
+        youtube.thumbnails().set(
+            videoId=video_id, media_body=MediaFileUpload(str(thumbnail_path))
+        ).execute()
 
     return video_id

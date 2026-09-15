@@ -4,6 +4,7 @@ import subprocess
 import wave
 from pathlib import Path
 
+from . import cost_tracker
 from .utils import ASSETS_DIR, DRY_RUN, load_channel_config, log
 
 
@@ -42,7 +43,7 @@ def _wav_duration(path: Path) -> float:
         return f.getnframes() / f.getframerate()
 
 
-def synthesize_scenes(scenes: list, run_dir: Path) -> list:
+def synthesize_scenes(scenes: list, run_dir: Path, run_id: str = "unknown") -> list:
     """Mutates scenes in place, adding 'audio_path' and 'duration' to each,
     and returns the list."""
     config = load_channel_config()
@@ -63,6 +64,7 @@ def synthesize_scenes(scenes: list, run_dir: Path) -> list:
                 tts_cfg["voice_name"],
                 tts_cfg.get("speaking_rate", 1.0),
             )
+            cost_tracker.record_google_tts_call(run_id, i, len(scene["narration"]))
         scene["audio_path"] = str(out_path)
         scene["duration"] = _wav_duration(out_path)
 
