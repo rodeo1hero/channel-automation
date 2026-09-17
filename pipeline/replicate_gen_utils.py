@@ -25,6 +25,24 @@ def image_to_data_uri(path) -> str:
     return "data:image/png;base64," + base64.b64encode(data).decode("ascii")
 
 
+def _get_with_retry(url: str, retries: int = 4, **kwargs):
+    """Retries a GET on transient network failures (connection reset, DNS blip,
+    timeout, etc.) -- a bare requests.exceptions.RequestException has no HTTP
+    response to check a status code on, so a plain requests.get() call here used
+    to crash the whole run on any dropped connection instead of just retrying
+    like a 429 already did in post_prediction below."""
+    last_exc = None
+    for attempt in range(retries):
+        try:
+            return requests.get(url, **kwargs)
+        except requests.exceptions.RequestException as e:
+            last_exc = e
+            wait_s = 2 ** attempt
+            log(f"  network error on GET (attempt {attempt + 1}/{retries}): {e}; waiting {wait_s}s")
+            time.sleep(wait_s)
+    raise RuntimeError(f"GET {url} failed after {retries} attempts: {last_exc}")
+
+
 def post_prediction(payload: dict, token: str) -> dict:
     headers = {
         "Authorization": f"Bearer {token}",
@@ -33,10 +51,16 @@ def post_prediction(payload: dict, token: str) -> dict:
     }
     last_error = None
     for attempt in range(MAX_RETRIES):
-        resp = requests.post(
-            f"https://api.replicate.com/v1/models/{MODEL}/predictions",
-            headers=headers, json={"input": payload}, timeout=180,
-        )
+        try:
+            resp = requests.post(
+                f"https://api.replicate.com/v1/models/{MODEL}/predictions",
+                headers=headers, json={"input": payload}, timeout=180,
+            )
+        except requests.exceptions.RequestException as e:
+            wait_s = 2 ** attempt
+            log(f"  network error on POST (attempt {attempt + 1}/{MAX_RETRIES}): {e}; waiting {wait_s}s")
+            time.sleep(wait_s)
+            continue
         if resp.status_code == 429:
             wait_s = float(resp.headers.get("Retry-After", 2 ** attempt))
             log(f"  rate-limited, waiting {wait_s:.0f}s (attempt {attempt + 1}/{MAX_RETRIES})")
@@ -55,7 +79,7 @@ def post_prediction(payload: dict, token: str) -> dict:
         get_url = data["urls"]["get"]
         for _ in range(30):
             time.sleep(4)
-            poll = requests.get(get_url, headers=headers, timeout=30)
+            poll = _get_with_retry(get_url, headers=headers, timeout=30)
             poll.raise_for_status()
             data = poll.json()
             if data.get("status") == "succeeded":
@@ -69,7 +93,7 @@ def post_prediction(payload: dict, token: str) -> dict:
 
 
 def download_image(url: str) -> Image.Image:
-    resp = requests.get(url, timeout=60)
+    resp = _get_with_retry(url, timeout=60)
     resp.raise_for_status()
     return Image.open(io.BytesIO(resp.content))
 

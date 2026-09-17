@@ -46,6 +46,53 @@ def _placeholder_image(path: Path, text: str, size=(1920, 1080)) -> None:
     img.save(path)
 
 
+def _post_with_retry(url: str, headers: dict, json_body: dict):
+    """POSTs to Replicate, retrying on BOTH rate limits (HTTP 429) and transient
+    network failures (connection reset, DNS blip, timeout, etc.) -- a bare
+    requests.exceptions.RequestException has no HTTP response to check a status
+    code on, so it needs its own except clause rather than falling through the
+    429-only status check that used to be the only retry path here. A single
+    dropped connection on GitHub Actions' runner used to crash the whole run
+    (losing all already-completed narration/TTS work for every scene) instead
+    of just retrying like a 429 already did."""
+    resp = None
+    for attempt in range(MAX_RETRIES):
+        try:
+            resp = requests.post(url, headers=headers, json=json_body, timeout=120)
+        except requests.exceptions.RequestException as e:
+            wait_s = 2 ** attempt
+            log(f"Replicate network error on POST (attempt {attempt + 1}/{MAX_RETRIES}): {e}; waiting {wait_s}s")
+            time.sleep(wait_s)
+            continue
+        if resp.status_code != 429:
+            return resp
+        wait_s = float(resp.headers.get("Retry-After", 2 ** attempt))
+        log(f"Replicate rate-limited (attempt {attempt + 1}/{MAX_RETRIES}), waiting {wait_s:.0f}s")
+        time.sleep(wait_s)
+
+    if resp is None:
+        raise RuntimeError(
+            f"Replicate POST failed after {MAX_RETRIES} attempts -- network error every time, no response received"
+        )
+    return resp
+
+
+def _get_with_retry(url: str, retries: int = 4, **kwargs):
+    """Same rationale as _post_with_retry, for the polling and image-download GETs --
+    both used to be a single unretried requests.get() that could crash the run on any
+    transient network blip."""
+    last_exc = None
+    for attempt in range(retries):
+        try:
+            return requests.get(url, **kwargs)
+        except requests.exceptions.RequestException as e:
+            last_exc = e
+            wait_s = 2 ** attempt
+            log(f"Replicate network error on GET (attempt {attempt + 1}/{retries}): {e}; waiting {wait_s}s")
+            time.sleep(wait_s)
+    raise RuntimeError(f"Replicate GET {url} failed after {retries} attempts: {last_exc}")
+
+
 def _generate_replicate(prompt: str, out_path: Path, aspect_ratio: str = "16:9",
                          run_id: str = "unknown", scene_index: int = -1) -> None:
     token = require_env("REPLICATE_API_TOKEN")
@@ -55,19 +102,11 @@ def _generate_replicate(prompt: str, out_path: Path, aspect_ratio: str = "16:9",
         "Prefer": "wait",
     }
 
-    resp = None
-    for attempt in range(MAX_RETRIES):
-        resp = requests.post(
-            f"https://api.replicate.com/v1/models/{REPLICATE_MODEL}/predictions",
-            headers=headers,
-            json={"input": {"prompt": prompt, "aspect_ratio": aspect_ratio}},
-            timeout=120,
-        )
-        if resp.status_code != 429:
-            break
-        wait_s = float(resp.headers.get("Retry-After", 2 ** attempt))
-        log(f"Replicate rate-limited (attempt {attempt + 1}/{MAX_RETRIES}), waiting {wait_s:.0f}s")
-        time.sleep(wait_s)
+    resp = _post_with_retry(
+        f"https://api.replicate.com/v1/models/{REPLICATE_MODEL}/predictions",
+        headers,
+        {"input": {"prompt": prompt, "aspect_ratio": aspect_ratio}},
+    )
 
     resp.raise_for_status()
     # A 429 never reaches here (it loops or eventually raises via raise_for_status
@@ -85,7 +124,7 @@ def _generate_replicate(prompt: str, out_path: Path, aspect_ratio: str = "16:9",
         if status in ("failed", "canceled"):
             raise RuntimeError(f"Replicate prediction {status}: {data.get('error')}")
         time.sleep(5)
-        poll_resp = requests.get(get_url, headers={"Authorization": f"Bearer {token}"}, timeout=30)
+        poll_resp = _get_with_retry(get_url, headers={"Authorization": f"Bearer {token}"}, timeout=30)
         poll_resp.raise_for_status()
         data = poll_resp.json()
     else:
@@ -96,7 +135,7 @@ def _generate_replicate(prompt: str, out_path: Path, aspect_ratio: str = "16:9",
     if not image_url:
         raise RuntimeError(f"Replicate prediction succeeded but returned no output: {data}")
 
-    img_resp = requests.get(image_url, timeout=60)
+    img_resp = _get_with_retry(image_url, timeout=60)
     img_resp.raise_for_status()
     with open(out_path, "wb") as f:
         f.write(img_resp.content)
