@@ -14,7 +14,7 @@ import json
 
 from .ideas import ANTHROPIC_MODEL
 from .stickman.actions import ACTION_NAMES
-from .utils import DRY_RUN, log
+from .utils import DRY_RUN, log, merge_hook_into_opening_scene
 
 TARGET_SECONDS = 25  # midpoint of the ~20-30s target agreed with the user
 WORDS_PER_SECOND = 2.5  # ~150 wpm, matching script_writer.py's pacing assumption
@@ -28,14 +28,16 @@ scrolling Shorts stop and tap through to watch the full video.
 The long-form video this Short is promoting:
 Title: {main_title}
 Description: {main_description}
-Opening narration (how the full video itself starts): {opening_narration}
+The video's HOOK claim (its central surprising claim, already used to open the full
+video itself): {hook}
 
 Write {target_seconds} seconds of narration (~{target_words} words at ~150 wpm) for the
 SAME recurring stick-figure narrator character (same face/build, don't describe it),
 broken into 2-3 short scenes (roughly 7-12 seconds of narration each). This is a hook,
 not a recap:
-- Open with the single most surprising, counterintuitive, or high-stakes claim from the
-  full video -- the "wait, what?" moment, not general throat-clearing or "did you know".
+- Open Scene 1 with the HOOK claim above, verbatim or near-verbatim -- reuse it as-is
+  rather than inventing a different opening claim. The "wait, what?" moment is already
+  decided; your job is to make it land in a vertical, fast-cut format.
 - Build very briefly (1-2 lines) on why that claim is true or what's at stake.
 - End on an explicit, unresolved cliffhanger or open question that the full video
   answers -- something like naming the twist is coming without giving it away. Do NOT
@@ -75,12 +77,13 @@ Respond as JSON only, matching exactly this shape:
 
 
 def _mock_short_script(main_script: dict) -> dict:
+    hook = main_script.get("hook") or "Everyone thinks this is a good thing. It isn't."
     return {
         "title": f"The dark side of: {main_script.get('title', 'this topic')}",
         "teaser": "It's not what you think.",
         "scenes": [
             {
-                "narration": "Everyone thinks this is a good thing. It isn't.",
+                "narration": hook,
                 "actions": ["surprised", "point_right"],
                 "background_prompt": "a narrow dramatic alleyway with tall walls on either side",
             },
@@ -102,32 +105,36 @@ def write_hook_script(main_script: dict, client=None) -> dict:
     for over the cheaper auto-extract option)."""
     target_words = round(TARGET_SECONDS * WORDS_PER_SECOND)
 
+    # Reuse the main video's own hook claim rather than asking Claude to derive (and
+    # potentially invent) a second one from context -- see merge_hook_into_opening_scene.
+    # Falls back to the main video's scene-1 narration for a main script written before
+    # the "hook" field existed.
+    hook = main_script.get("hook") or ""
+    if not hook and main_script.get("scenes"):
+        hook = main_script["scenes"][0].get("narration", "")
+
     if DRY_RUN or client is None:
         log(f"Writing Shorts hook script for '{main_script.get('title')}' (mock)")
-        return _mock_short_script(main_script)
-
-    log(f"Writing Shorts hook script for '{main_script.get('title')}'")
-    opening_narration = ""
-    if main_script.get("scenes"):
-        opening_narration = main_script["scenes"][0].get("narration", "")
-
-    prompt = PROMPT_TEMPLATE.format(
-        target_seconds=TARGET_SECONDS,
-        target_words=target_words,
-        main_title=main_script.get("title", ""),
-        main_description=main_script.get("description", ""),
-        opening_narration=opening_narration,
-        action_names=", ".join(ACTION_NAMES),
-    )
-    resp = client.messages.create(
-        model=ANTHROPIC_MODEL,
-        max_tokens=2000,
-        messages=[{"role": "user", "content": prompt}],
-    )
-    text = resp.content[0].text.strip()
-    if text.startswith("```"):
-        text = text.strip("`").split("\n", 1)[-1]
-    short_script = json.loads(text)
+        short_script = _mock_short_script(main_script)
+    else:
+        log(f"Writing Shorts hook script for '{main_script.get('title')}'")
+        prompt = PROMPT_TEMPLATE.format(
+            target_seconds=TARGET_SECONDS,
+            target_words=target_words,
+            main_title=main_script.get("title", ""),
+            main_description=main_script.get("description", ""),
+            hook=hook,
+            action_names=", ".join(ACTION_NAMES),
+        )
+        resp = client.messages.create(
+            model=ANTHROPIC_MODEL,
+            max_tokens=2000,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        text = resp.content[0].text.strip()
+        if text.startswith("```"):
+            text = text.strip("`").split("\n", 1)[-1]
+        short_script = json.loads(text)
 
     # Same defensive cleanup as script_writer.write_script() -- a bad action name from
     # Claude shouldn't crash the whole Short, just fall back to something safe.
@@ -136,5 +143,9 @@ def write_hook_script(main_script: dict, client=None) -> dict:
         if bad_actions:
             log(f"Warning: dropping unknown action name(s) from Shorts script: {bad_actions}")
             scene["actions"] = [a for a in scene.get("actions", []) if a in ACTION_NAMES] or ["idle"]
+
+    # Enforce "scene 1 opens on the reused hook" in code too, same rationale as the
+    # main video's script_writer.write_script().
+    merge_hook_into_opening_scene(short_script.get("scenes", []), hook)
 
     return short_script

@@ -8,7 +8,7 @@ from .character_gen import OUTFITS
 from .ideas import ANTHROPIC_MODEL
 from .stickman.actions import ACTION_NAMES
 from .stickman.cast_descriptions import CAST_POSE_NAMES
-from .utils import DRY_RUN, load_channel_config, log
+from .utils import DRY_RUN, load_channel_config, log, merge_hook_into_opening_scene
 
 PROMPT_TEMPLATE = """You are the writer for a YouTube video essay channel that
 uses simple animated stick-figure storytelling (think hand-drawn explainer
@@ -30,11 +30,29 @@ Pick whichever best matches this video's topic/era/setting (e.g. "historical" fo
 ancient-world topic, "business" or "financial" for an economics topic, "standard" when
 nothing else fits better). The whole video uses this one outfit throughout.
 
+Before writing any scenes, decide:
+1. "hook": one or two sentences that state the video's central surprising claim on their
+   own, with no setup -- written to work as a cold open even for someone who's watched
+   nothing else. Assert the surprising fact/consequence directly; don't tease "we'll find
+   out why" or "you won't believe what happened next".
+2. "payoff": the single sentence that resolves the hook -- the actual mechanism or twist
+   the hook was pointing at. Decide this BEFORE writing any scene narration, so every
+   scene below is provably building toward it rather than just accumulating facts.
+
 Then write the full narration script broken into scenes (6-10 seconds of narration each --
 favor MORE, SHORTER scenes over fewer long ones: a new scene means a new background and a
 fresh beat/action for the character, so more scenes per minute keeps the visuals cutting
 and changing at a faster, punchier pace instead of sitting on one backdrop for a long
-stretch of narration).
+stretch of narration), such that:
+- Scene 1's narration opens with the "hook" text above (verbatim or near-verbatim).
+- Each scene raises the stakes, adds a complication, or reveals something the previous
+  scene didn't show -- never just a second example of the same point. If two scenes could
+  be reordered without losing anything, combine or cut one of them.
+- Every scene except the last ends on an unresolved thread -- a question, a reversal, or
+  an implied "but that's not what actually happened" -- that the next scene's opening line
+  directly answers. Don't let a scene end on a settled, closed thought.
+- The final scene delivers the "payoff" and explicitly closes the thread the hook opened.
+
 For each scene provide:
 - "narration": the exact words to be spoken (no stage directions inside this text)
 - "actions": a list of 1-3 action names describing what the stick figure does during
@@ -103,6 +121,8 @@ Respond as JSON only, matching exactly this shape:
   "title": "...",
   "description": "...",
   "outfit": "...",
+  "hook": "...",
+  "payoff": "...",
   "scenes": [
     {{"narration": "...", "actions": ["...", "..."], "background_prompt": "...",
       "cast": [{{"archetype": "...", "pose": "...", "side": "right", "dialogue": "...",
@@ -113,58 +133,64 @@ Respond as JSON only, matching exactly this shape:
 """
 
 
+def _mock_script(topic: dict) -> dict:
+    return {
+        "title": topic["title"],
+        "description": f"A closer look at: {topic.get('angle', topic['title'])}",
+        "outfit": "standard",
+        "hook": "Every year, thousands of people walk past this without noticing what's really going on.",
+        "payoff": "The hidden system was there the whole time -- it just never needed to be seen.",
+        "scenes": [
+            {
+                "narration": "It looks like an ordinary street, nothing more.",
+                "actions": ["walk_right", "idle"],
+                "background_prompt": "a busy city street with shops and pedestrians",
+            },
+            {
+                "narration": "But underneath, there's a whole hidden system at work -- and it explains everything that happens here.",
+                "actions": ["think", "explain"],
+                "background_prompt": "a simple diagram-like room with large gears on the wall",
+                "cast": [
+                    {"archetype": "official", "pose": "offer", "side": "right",
+                     "dialogue": "Taxes. For everything.", "start": 0.5, "end": 3.0},
+                ],
+            },
+        ],
+    }
+
+
 def write_script(topic: dict, client=None) -> dict:
     config = load_channel_config()
     words = config["target_length_minutes"] * 150
 
     if DRY_RUN or client is None:
         log(f"Writing script for '{topic['title']}' (mock)")
-        return {
-            "title": topic["title"],
-            "description": f"A closer look at: {topic.get('angle', topic['title'])}",
-            "outfit": "standard",
-            "scenes": [
-                {
-                    "narration": "Every year, thousands of people watch this and think it's ordinary.",
-                    "actions": ["walk_right", "idle"],
-                    "background_prompt": "a busy city street with shops and pedestrians",
-                },
-                {
-                    "narration": "But underneath, there's a whole hidden system at work.",
-                    "actions": ["think", "explain"],
-                    "background_prompt": "a simple diagram-like room with large gears on the wall",
-                    "cast": [
-                        {"archetype": "official", "pose": "offer", "side": "right",
-                         "dialogue": "Taxes. For everything.", "start": 0.5, "end": 3.0},
-                    ],
-                },
-            ],
-        }
-
-    log(f"Writing script for '{topic['title']}'")
-    outfit_options = "; ".join(f'"{k}" ({v})' for k, v in OUTFITS.items())
-    cast_role_options = "; ".join(f'"{k}" ({v})' for k, v in CAST_ROLES.items())
-    prompt = PROMPT_TEMPLATE.format(
-        niche=config["niche"],
-        tone=config["tone"],
-        minutes=config["target_length_minutes"],
-        words=words,
-        title=topic["title"],
-        angle=topic.get("angle", ""),
-        action_names=", ".join(ACTION_NAMES),
-        outfit_options=outfit_options,
-        cast_role_options=cast_role_options,
-        cast_pose_names=", ".join(CAST_POSE_NAMES),
-    )
-    resp = client.messages.create(
-        model=ANTHROPIC_MODEL,
-        max_tokens=8000,
-        messages=[{"role": "user", "content": prompt}],
-    )
-    text = resp.content[0].text.strip()
-    if text.startswith("```"):
-        text = text.strip("`").split("\n", 1)[-1]
-    script = json.loads(text)
+        script = _mock_script(topic)
+    else:
+        log(f"Writing script for '{topic['title']}'")
+        outfit_options = "; ".join(f'"{k}" ({v})' for k, v in OUTFITS.items())
+        cast_role_options = "; ".join(f'"{k}" ({v})' for k, v in CAST_ROLES.items())
+        prompt = PROMPT_TEMPLATE.format(
+            niche=config["niche"],
+            tone=config["tone"],
+            minutes=config["target_length_minutes"],
+            words=words,
+            title=topic["title"],
+            angle=topic.get("angle", ""),
+            action_names=", ".join(ACTION_NAMES),
+            outfit_options=outfit_options,
+            cast_role_options=cast_role_options,
+            cast_pose_names=", ".join(CAST_POSE_NAMES),
+        )
+        resp = client.messages.create(
+            model=ANTHROPIC_MODEL,
+            max_tokens=8000,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        text = resp.content[0].text.strip()
+        if text.startswith("```"):
+            text = text.strip("`").split("\n", 1)[-1]
+        script = json.loads(text)
 
     # Defensive cleanup: the renderer already falls back gracefully on bad
     # values, but sanitize here too so a script with a typo'd action/outfit
@@ -178,6 +204,10 @@ def write_script(topic: dict, client=None) -> dict:
             log(f"Warning: dropping unknown action name(s) from script: {bad_actions}")
             scene["actions"] = [a for a in scene.get("actions", []) if a in ACTION_NAMES] or ["idle"]
         scene["cast"] = _sanitize_cast(scene.get("cast"))
+
+    # Enforce the "scene 1 opens on the hook" rule from the prompt in code too, since a
+    # live model won't always comply -- see merge_hook_into_opening_scene's docstring.
+    merge_hook_into_opening_scene(script.get("scenes", []), script.get("hook", ""))
 
     return script
 

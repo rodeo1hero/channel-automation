@@ -71,3 +71,23 @@ def require_env(name: str) -> str:
     if not val and not DRY_RUN:
         sys.exit(f"Missing required environment variable: {name}")
     return val or f"DRY-RUN-{name}"
+
+
+def merge_hook_into_opening_scene(scenes: list, hook: str) -> None:
+    """Guarantees scene 1's narration opens with `hook`, even if the model didn't
+    follow the prompt's "scene 1 opens with the hook, verbatim or near-verbatim"
+    instruction. Skips the merge if scene 1 already starts with (a normalized prefix
+    of) the hook, so a model that DID comply doesn't get the hook stated twice.
+    Shared by script_writer.py (main video) and shorts_writer.py (companion Short),
+    since both scripts carry a "hook" field and both need this same guarantee."""
+    hook = (hook or "").strip()
+    if not hook or not scenes:
+        return
+    narration = scenes[0].get("narration", "") or ""
+    # Compare a short, normalized prefix rather than the whole strings, since the
+    # model may rephrase slightly ("near-verbatim") even when it did follow the
+    # instruction.
+    hook_prefix = hook[:40].strip().lower()
+    if hook_prefix and narration.strip().lower().startswith(hook_prefix):
+        return
+    scenes[0]["narration"] = f"{hook} {narration}".strip()
